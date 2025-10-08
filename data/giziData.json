@@ -1,0 +1,26 @@
+[
+  {
+    "id": "gizi_001",
+    "topic": "Stunting",
+    "sub_topic": "Definisi",
+    "source": "Kementerian Kesehatan RI",
+    "date_updated": "2024-09-01",
+    "content": "Stunting adalah gangguan pertumbuhan dan perkembangan anak balita (di bawah lima tahun) yang ditandai dengan tinggi badan lebih rendah dari standar usianya karena kekurangan gizi kronis dan infeksi berulang, terutama selama periode 1.000 Hari Pertama Kehidupan (HPK). Kondisi ini bukan hanya membuat anak pendek, tetapi juga dapat menghambat perkembangan kognitif, meningkatkan risiko penyakit, dan menurunkan produktivitas di masa depan."
+  },
+  {
+    "id": "gizi_002",
+    "topic": "Stunting",
+    "sub_topic": "Penyebab Gizi",
+    "source": "Jurnal Gizi Indonesia",
+    "date_updated": "2024-08-15",
+    "content": "Penyebab stunting dari segi gizi meliputi: Kekurangan kalori yang menghambat pertumbuhan fisik; Kekurangan protein yang menyebabkan keterlambatan perkembangan otot dan sel; dan Kekurangan mikronutrien penting seperti zat besi, vitamin A, dan yodium yang vital untuk perkembangan organ."
+  },
+  {
+    "id": "gizi_003",
+    "topic": "Gizi Ibu Hamil",
+    "sub_topic": "Vitamin Esensial",
+    "source": "IDAI",
+    "date_updated": "2024-09-10",
+    "content": "Asupan vitamin yang cukup sangat penting bagi ibu hamil. Asam folat diperlukan untuk pembentukan tabung saraf janin, sementara zat besi mencegah anemia yang dapat memicu kelahiran prematur. Vitamin D dan Kalsium penting untuk pertumbuhan tulang janin."
+  }
+]

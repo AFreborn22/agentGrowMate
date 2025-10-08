@@ -1,0 +1,3 @@
+*.env
+ragagent/
+__pycache__/
