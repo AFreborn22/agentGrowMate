@@ -2,6 +2,8 @@ from pydantic import BaseModel
 
 class QueryRequest(BaseModel):
     query: str
+    token: str  
+    nik: str       
 
 class SourceDocument(BaseModel):
     content: str

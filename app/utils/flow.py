@@ -2,10 +2,11 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.vectorstores import FAISS
 from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
 from langchain_core.documents import Document
-from langchain_community.document_loaders import JSONLoader
 from langchain_core.prompts import ChatPromptTemplate
-from handleUpdateData import updateTool
+from langchain_core.messages import SystemMessage
+from langchain.agents import AgentExecutor, create_tool_calling_agent
 from dotenv import load_dotenv
+from app.utils.tools import UPDATE_TOOLS
 
 import os
 import functools
@@ -65,68 +66,55 @@ class ChatbotAgent:
         self.vectorStore = vectorStore
         self.llm = llm_model
         self.retriever = Retriever(vectorStore)
-        self.tools = [updateTool]
-    
-        # PROMPT RAG
-        self.promptTemplate = ChatPromptTemplate.from_messages([
-            ("system", """
-                Anda adalah Asisten Pakar Gizi dan Pencegahan stunting untuk ibu hamil bernama MateBot panggil setiap user Bunda. Jawablah pertanyaan pengguna **HANYA** berdasarkan konteks yang diberikan di bawah.
-                Pastikan jawaban Anda:
-                1. Menggunakan bahasa Indonesia formal, ramah, dan informatif.
-                2. Menyebutkan **Definisi**, **Penyebab**, dan **Pencegahan** jika relevan.
-                3. Gunakan bullet point atau penomoran untuk memudahkan pembacaan.
+        
+        self.token = None 
+        self.nik = None   
 
-                KONTEKS:
-                {context}
-                """),
-                ("user", "{query}")
+        rag_tool = self.retriever.retriever.as_tool(
+            name="Gizi_Retriever", 
+            description="Alat untuk mencari informasi spesifik mengenai gizi, kehamilan, dan stunting. Gunakan alat ini untuk menjawab semua pertanyaan yang berhubungan dengan kesehatan/gizi."
+        )
+        tools = [rag_tool] + UPDATE_TOOLS 
+        
+        system_message = """
+            Anda adalah Asisten Pakar Gizi dan Pencegahan Stunting (MateBot), panggil setiap user 'Bunda'. 
+            
+            1. **Untuk Pertanyaan Gizi/Stunting:** Wajib gunakan alat 'Gizi_Retriever' untuk mendapatkan konteks. Jawablah berdasarkan konteks yang diberikan oleh alat tersebut.
+            2. **Untuk Permintaan Update Data:** Wajib gunakan alat 'updateData' HANYA JIKA Bunda secara eksplisit meminta untuk mengubah data profil (misalnya berat badan, usia, alamat, dll).
+            3. **Gaya Bahasa:** Jawab dengan bahasa Indonesia formal, ramah, dan informatif.
+            4. **Ketentuan Jawaban RAG:** Jika Anda menggunakan Gizi_Retriever, pastikan jawaban Anda menyebutkan Definisi, Penyebab, dan Pencegahan jika relevan, dan gunakan bullet point atau penomoran.
+            5. **Di Luar Topik:** Jika pertanyaan sama sekali tidak berhubungan dengan topik ini dan tidak memerlukan update data, jawab: 'Maaf Bunda, saya hanya dilatih untuk memberikan informasi spesifik mengenai gizi, pencegahan stunting, atau mengelola data profil Anda.'
+        """
+        
+        agent_prompt = ChatPromptTemplate.from_messages([
+            SystemMessage(content=system_message),
+            ("user", "{input}"),
+            ("placeholder", "{agent_scratchpad}"), 
         ])
 
-        self.FALLBACK_PROMPT = ChatPromptTemplate.from_messages([
-            ("system", """
-                Bunda bertanya tentang '{query}'. Informasi spesifik tidak ditemukan di basis data gizi MateBot.
-                Jawab pertanyaan ini menggunakan pengetahuan umum Anda HANYA JIKA topik tersebut masih berhubungan erat dengan Gizi, Kehamilan, atau Stunting. 
-                # Jika pertanyaan sama sekali tidak berhubungan dengan topik ini, jawab: 'Maaf Bunda, saya hanya dilatih untuk memberikan informasi spesifik mengenai gizi dan pencegahan stunting.' 
-                Berikan jawaban dengan memanggil user 'Bunda' dan berikan disclaimer bahwa ini adalah informasi umum.
-            """),
-            ("user", "{query}")
-        ])
-    
-    def generateResponse(self, query: str):
-        """ Menghasilkan respons menggunakan retriever dan model generatif (Gemini) """
-        
-        DOC_COUNT = 5 
-        DISTANCE_THRESHOLD = 0.4 
+        llm_with_tools = self.llm.bind_tools(tools)
+        agent_chain = create_tool_calling_agent(llm_with_tools, tools, agent_prompt)
+        self.agent_executor = AgentExecutor(agent=agent_chain, tools=tools, verbose=True)
 
-        scoredDocs = self.vectorStore.similarity_search_with_score(query, k=DOC_COUNT)
+    def generateResponse(self, query: str, nik: str, token: str): 
+        """ 
+        Menghasilkan respons menggunakan Agent Executor.
+        """
         
-        bestDistance = scoredDocs[0][1] if scoredDocs else 999.0
+        self.nik = nik
+        self.token = token
         
-        retrievedData = []
-        
-        if bestDistance > DISTANCE_THRESHOLD:
-            response = self.llm.invoke(self.FALLBACK_PROMPT.format(query=query))
-            retrievedData.append(Document(page_content="[SUMBER: Pengetahuan Umum MateBot (Tidak bersumber dari data gizi spesifik).]", metadata={"source": "Gemini Knowledge"}))
+        try:
+            response = self.agent_executor.invoke({"input": query})
             
-        else:
-            retrievedData = self.retriever.retrieve(query)
-            context = "\n---\n".join([doc.page_content for doc in retrievedData])
-            
-            response = self.llm.invoke(
-                self.promptTemplate.format_messages(context=context, query=query)
-            )
-
-        # for tool in self.tools:
-        #     if tool.name == "Update Data" and "berat badan" in query.lower():
-        #         response = tool.func(query, "nik") 
-        #         break
-        #     else:
-        #         response = self.llm.invoke(self.promptTemplate.format_messages(context=context, query=query))
-
-        return {
-            "answer": response.content,
-            "source_documents": retrievedData
-        }
+            return {
+                "answer": response["output"],
+                "source_documents": [] 
+            }
+        
+        finally:
+            self.nik = None
+            self.token = None
     
 _GLOBAL_AGENT_INSTANCE = None 
     

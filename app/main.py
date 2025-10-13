@@ -24,7 +24,7 @@ async def startup_event():
         initializeAgent()
         app.include_router(agent.router, prefix="/api", tags=["chat"])
     except Exception as e:
-        raise RuntimeError(f"Gagal memulai agen: {e}")
+        raise RuntimeError(f"Gagal terhubung dengan agent: {e}")
 
 @app.middleware("http")
 async def logRequests(request: Request, call_next):
@@ -44,5 +44,4 @@ app.add_middleware(
     allow_headers=["*"], 
 )
 
-app.include_router(agent.router, prefix="/api", tags=["/"])
 app.include_router(agent.router, prefix="/api", tags=["chat"])

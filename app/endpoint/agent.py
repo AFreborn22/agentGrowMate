@@ -24,7 +24,11 @@ async def chatEndpoint(request: QueryRequest):
         )
 
     try:
-        response_data = agentInstance.generateResponse(request.query)
+        response_data = agentInstance.generateResponse(
+            query=request.query,
+            nik=request.nik,      
+            token=request.token   
+        )
 
         converted_sources = [
             SourceDocument(
