@@ -4,6 +4,7 @@ from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGener
 from langchain_core.documents import Document
 from langchain_community.document_loaders import JSONLoader
 from langchain_core.prompts import ChatPromptTemplate
+from handleUpdateData import updateTool
 from dotenv import load_dotenv
 
 import os
@@ -64,6 +65,7 @@ class ChatbotAgent:
         self.vectorStore = vectorStore
         self.llm = llm_model
         self.retriever = Retriever(vectorStore)
+        self.tools = [updateTool]
     
         # PROMPT RAG
         self.promptTemplate = ChatPromptTemplate.from_messages([
@@ -113,6 +115,13 @@ class ChatbotAgent:
             response = self.llm.invoke(
                 self.promptTemplate.format_messages(context=context, query=query)
             )
+
+        # for tool in self.tools:
+        #     if tool.name == "Update Data" and "berat badan" in query.lower():
+        #         response = tool.func(query, "nik") 
+        #         break
+        #     else:
+        #         response = self.llm.invoke(self.promptTemplate.format_messages(context=context, query=query))
 
         return {
             "answer": response.content,

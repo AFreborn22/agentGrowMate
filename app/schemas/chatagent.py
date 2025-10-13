@@ -7,6 +7,6 @@ class SourceDocument(BaseModel):
     content: str
     metadata: dict
 
-class ChatResponse(BaseModel):
+class QueryResponse(BaseModel):
     answer: str
     source_documents: list[SourceDocument]

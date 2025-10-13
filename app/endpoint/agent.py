@@ -1,5 +1,5 @@
 from fastapi import HTTPException, APIRouter
-from app.schemas.chatagent import QueryRequest, SourceDocument, ChatResponse
+from app.schemas.chatagent import QueryRequest, SourceDocument, QueryResponse
 from app.utils.flow import getAgent
 
 router = APIRouter()
@@ -12,7 +12,7 @@ def readRoot():
     status = "OK" if agentInstance else "Loading/Error (Agent NOT ready)"
     return {"status": status, "message": "MateBot API is running."}
 
-@router.post("/chat", response_model=ChatResponse)
+@router.post("/chat", response_model=QueryResponse)
 async def chatEndpoint(request: QueryRequest):
     """ Endpoint untuk berinteraksi dengan Chatbot Agent. """
     agentInstance = getAgent()
@@ -34,7 +34,7 @@ async def chatEndpoint(request: QueryRequest):
             for doc in response_data["source_documents"]
         ]
         
-        return ChatResponse(
+        return QueryResponse(
             answer=response_data["answer"],
             source_documents=converted_sources
         )
