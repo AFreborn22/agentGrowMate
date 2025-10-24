@@ -1,21 +1,25 @@
 import httpx
 import os
 from typing import Optional
+from datetime import date
+from pydantic import EmailStr
 from langchain_core.tools import tool
+
 
 API_URL = os.getenv("API_URL", "http://127.0.0.1:8080/api/auth/update")
 
 @tool
 def updateData(
-    nama: Optional[str] = None,
-    usia: Optional[int] = None,
-    tempat_lahir: Optional[str] = None,
-    tanggal_lahir: Optional[str] = None,
-    alamat: Optional[str] = None,
-    email: Optional[str] = None,
-    berat_badan: Optional[float] = None,
-    tinggi_badan: Optional[float] = None,
-    lingkar_tangan: Optional[float] = None,
+    nama: Optional[str] | None = None,
+    tempat_lahir: Optional[str] | None = None ,
+    tanggal_lahir: Optional[date] | None = None ,
+    tanggal_kehamilan_pertama: Optional[date] | None = None ,
+    pal: Optional[str] | None = None ,
+    alamat: Optional[str] | None = None ,
+    email: Optional[EmailStr] | None = None ,  
+    berat_badan: Optional[float] | None = None ,
+    tinggi_badan: Optional[float] | None = None ,
+    lingkar_lengan_atas: Optional[float] | None = None 
 ) :
     """
     Alat ini digunakan untuk memperbarui data profil kesehatan ibu hamil. 
@@ -29,17 +33,19 @@ def updateData(
 
     updatePayload = {
         "nama" : nama,
-        "usia" : usia,
         "tempat_lahir" : tempat_lahir,
         "tanggal_lahir" : tanggal_lahir,
+        "tanggal_kehamilan_pertama" : tanggal_kehamilan_pertama,
+        "pal" : pal,
         "alamat" : alamat,
         "email" : email,
         "berat_badan" : berat_badan,
         "tinggi_badan" : tinggi_badan,
-        "lingkar_tangan" : lingkar_tangan
+        "lingkar_lengan_atas" : lingkar_lengan_atas
     }
 
     updatePayload ={k: v for k, v in updatePayload.items() if v is not None}
+    print(updatePayload)
 
     if not updatePayload :
         return "Gagal Memperbaharui data"

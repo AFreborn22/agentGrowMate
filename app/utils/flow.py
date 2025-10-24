@@ -1,19 +1,28 @@
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.vectorstores import FAISS
+from langchain.vectorstores import Chroma
 from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
 from langchain_core.documents import Document
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.messages import SystemMessage
 from langchain.agents import AgentExecutor, create_tool_calling_agent
 from dotenv import load_dotenv
+from urllib.parse import urlparse
 from app.utils.tools import UPDATE_TOOLS
 
 import os
 import functools
+import chromadb
 
 load_dotenv()
 if not os.getenv("GEMINI_API_KEY") and not os.getenv("GOOGLE_API_KEY"):
     raise ValueError("GEMINI_API_KEY atau GOOGLE_API_KEY tidak ditemukan di environment variables.")
+
+chromaDB = os.getenv("CHROMA_DB_URL")
+parsed_url = urlparse(chromaDB)
+host = parsed_url.hostname
+port = parsed_url.port
+
+client = chromadb.HttpClient(host=host, port=port)
 
 EMBEDDING_MODEL = GoogleGenerativeAIEmbeddings(model="text-embedding-004")
 LLM_MODEL = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.1)
@@ -39,30 +48,46 @@ class DataProcessor:
         return [Document(page_content=chunk) for chunk in chunks]
     
 class VectorDatabase:
-    def __init__(self, embeddingFunction: GoogleGenerativeAIEmbeddings):
+    def __init__(self, embeddingFunction : EMBEDDING_MODEL, vectorStore : Chroma, client : client):
         self.embeddingFunction = embeddingFunction
-        self.vectorStore = None
+        self.vectorStore = vectorStore
+        self.client = client
     
     def createIndex(self, documents: list[Document]):
         """ Membuat indeks vector store menggunakan FAISS dengan wrapper LangChain """
 
-        self.vectorStore = FAISS.from_documents(
-            documents=documents, 
-            embedding=self.embeddingFunction
-        )
+        self.vectorStore = self.vectorStore.get_or_create_collection("gizi_data")
+
+        for doc in documents:
+            content = doc.page_content if hasattr(doc, 'page_content') else doc['content']
+
+            embedding = self.embeddingFunction.embed_documents([content])[0]
+            
+            self.vectorStore.add(
+                [embedding],  # 
+                metadatas=[{
+                    "id": doc.get("id", "N/A"),
+                    "topic": doc.get("topic", "N/A"),
+                    "sub_topic": doc.get("sub_topic", "N/A"),
+                    "source": doc.get("source", "N/A"),
+                    "date_updated": doc.get("date_updated", "N/A"),
+                }],
+                ids=[f"doc_{doc['id']}"]  
+            )
+            
         return self.vectorStore
     
 class Retriever:
-    def __init__(self, vectorStore: FAISS):
+    def __init__(self, vectorStore : Chroma):
         self.retriever = vectorStore.as_retriever(search_kwargs={"k": 5})
+        self.vectorStore = vectorStore
     
     def retrieve(self, query: str) -> list[Document]:
         """ Melakukan pencarian pada vector store untuk menemukan data relevan """
-
         return self.retriever.invoke(query)
     
 class ChatbotAgent:
-    def __init__(self, vectorStore: FAISS, llm_model: ChatGoogleGenerativeAI):
+    def __init__(self, vectorStore: Chroma, llm_model: ChatGoogleGenerativeAI):
         self.vectorStore = vectorStore
         self.llm = llm_model
         self.retriever = Retriever(vectorStore)
@@ -122,19 +147,23 @@ _GLOBAL_AGENT_INSTANCE = None
 def initializeAgent() -> ChatbotAgent:
     global _GLOBAL_AGENT_INSTANCE
     
-    """ Memuat Vector Store dan membuat instance ChatbotAgent. """
-    print(f"Agent mencoba memuat index dari: {VECTOR_INDEX_FOLDER}")
+    collection_name = "gizi_data" 
+    print(f"Agent mencoba memuat index dari ChromaDB di {host}:{port}")
+
     try:
-        vector_store = FAISS.load_local(
-            folder_path=VECTOR_INDEX_FOLDER, 
-            embeddings=EMBEDDING_MODEL,
-            index_name=INDEX_NAME,
-            allow_dangerous_deserialization=True
+        client.get_collection(collection_name)
+
+        vector_store = Chroma(
+            client=client,
+            collection_name=collection_name,
+            embedding_function=EMBEDDING_MODEL,
         )
         print("✅ Agent: Vector Store berhasil dimuat dari disk.")
+
         agent_instance = ChatbotAgent(
-        vectorStore=vector_store, 
-        llm_model=LLM_MODEL)
+            vectorStore=vector_store, 
+            llm_model=LLM_MODEL
+        )
         
         _GLOBAL_AGENT_INSTANCE = agent_instance
         return agent_instance
