@@ -1,11 +1,12 @@
 import httpx
 import os
+from dotenv import load_dotenv
 from typing import Optional
 from datetime import date
 from pydantic import EmailStr
 from langchain_core.tools import tool
 
-
+load_dotenv()
 API_URL = os.getenv("API_URL", "http://127.0.0.1:8080/api/auth/update")
 
 @tool
@@ -25,6 +26,11 @@ def updateData(
     Alat ini digunakan untuk memperbarui data profil kesehatan ibu hamil. 
     Hanya panggil jika Bunda secara eksplisit meminta untuk mengubah 
     data profil seperti berat badan atau tinggi badan.
+
+    Perhatian : 
+    1. Jika tanggal lahir diubah, umur akan dihitung ulang secara otomatis. 
+    2. Jika tanggal kelahiran pertama diubah, periode kehamilan akan dihitung berdasarkan tanggal kelahiran pertama.
+    Mohon pastikan bahwa perubahan data lain terkait diperbarui sesuai dengan perhitungan otomatis yang telah disediakan.
     """
     from app.utils.flow import getAgent
     agentInstance = getAgent()

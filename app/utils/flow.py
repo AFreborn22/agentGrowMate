@@ -84,7 +84,8 @@ class Retriever:
     
     def retrieve(self, query: str) -> list[Document]:
         """ Melakukan pencarian pada vector store untuk menemukan data relevan """
-        return self.retriever.invoke(query)
+        docs = self.retriever.get_relevant_documents(query)
+        return docs
     
 class ChatbotAgent:
     def __init__(self, vectorStore: Chroma, llm_model: ChatGoogleGenerativeAI):
@@ -128,13 +129,52 @@ class ChatbotAgent:
         
         self.nik = nik
         self.token = token
+
         
         try:
+            retrievedDocs = self.retriever.retrieve(query)
             response = self.agent_executor.invoke({"input": query})
+
+            print(retrievedDocs)
+            
+            ids =set()
+            sourceDocuments = []
+
+            for d in retrievedDocs :
+                md = d.metadata if hasattr(d, "metadata") else d.get("metadata", "")
+                docId = md.get("id")
+                if docId :
+                    if docId in ids :
+                        continue
+                    ids.add(docId)
+                    sourceDocuments.append(d)
+
+            max_excerpt_chars = 1200
+            context_parts = []
+            for i, d in enumerate(sourceDocuments):
+                content = d.page_content if hasattr(d, "page_content") else d.get("content", "")
+                excerpt = content[:max_excerpt_chars].replace("\n", " ")
+                md = d.metadata if hasattr(d, "metadata") else d.get("metadata", {}) or {}
+                source_label = md.get("source", md.get("id", f"doc_{i}"))
+                context_parts.append(f"[Sumber {i+1} - {source_label}]: {excerpt}")
+
+            documents = []
+            for i, d in enumerate(sourceDocuments):
+                content = d.page_content if hasattr(d, "page_content") else d.get("content", "")
+                md = d.metadata if hasattr(d, "metadata") else d.get("metadata", {}) or {}
+                normalized_md = {
+                    "id": md.get("id", f"doc_{i}"),
+                    "source": md.get("source", "-"),
+                    "topic": md.get("topic", "-"),
+                    "sub_topic": md.get("sub_topic", "-"),
+                    "date_updated": md.get("date_updated", "-"),
+                    **{k: v for k, v in md.items() if k not in ("id", "source", "topic", "sub_topic", "date_updated")}
+                }
+                documents.append(Document(page_content=content, metadata=normalized_md))
             
             return {
                 "answer": response["output"],
-                "source_documents": [] 
+                "source_documents": documents
             }
         
         finally:
@@ -168,7 +208,7 @@ def initializeAgent() -> ChatbotAgent:
         _GLOBAL_AGENT_INSTANCE = agent_instance
         return agent_instance
     except Exception as e:
-        print(f"❌ Agent: Gagal memuat Vector Store. Pastikan index ada di {VECTOR_INDEX_FOLDER}. Error: {e}")
+        print(f"❌ Agent: Gagal memuat Vector Store. Error: {e}")
         raise RuntimeError("Gagal memuat Vector Store untuk agent.") from e
 
 
