@@ -122,9 +122,13 @@ class ChatbotAgent:
         agent_chain = create_tool_calling_agent(llm_with_tools, tools, agent_prompt)
         self.agent_executor = AgentExecutor(agent=agent_chain, tools=tools, verbose=True)
 
+    # flow.py (Di dalam class ChatbotAgent)
+
     def generateResponse(self, query: str, nik: str, token: str): 
         """ 
         Menghasilkan respons menggunakan Agent Executor.
+        
+        Perbaikan: Hanya memproses source_documents jika Gizi_Retriever digunakan.
         """
         
         self.nik = nik
@@ -132,48 +136,45 @@ class ChatbotAgent:
 
         
         try:
-            retrievedDocs = self.retriever.retrieve(query)
+            # 1. Panggil Agent Executor untuk mendapatkan jawaban dan menentukan tool yang digunakan
             response = self.agent_executor.invoke({"input": query})
-
-            print(retrievedDocs)
             
-            ids =set()
-            sourceDocuments = []
-
-            for d in retrievedDocs :
-                md = d.metadata if hasattr(d, "metadata") else d.get("metadata", "")
-                docId = md.get("id")
-                if docId :
-                    if docId in ids :
-                        continue
-                    ids.add(docId)
-                    sourceDocuments.append(d)
-
-            max_excerpt_chars = 1200
-            context_parts = []
-            for i, d in enumerate(sourceDocuments):
-                content = d.page_content if hasattr(d, "page_content") else d.get("content", "")
-                excerpt = content[:max_excerpt_chars].replace("\n", " ")
-                md = d.metadata if hasattr(d, "metadata") else d.get("metadata", {}) or {}
-                source_label = md.get("source", md.get("id", f"doc_{i}"))
-                context_parts.append(f"[Sumber {i+1} - {source_label}]: {excerpt}")
-
+            answer = response["output"]
             documents = []
-            for i, d in enumerate(sourceDocuments):
-                content = d.page_content if hasattr(d, "page_content") else d.get("content", "")
-                md = d.metadata if hasattr(d, "metadata") else d.get("metadata", {}) or {}
-                normalized_md = {
-                    "id": md.get("id", f"doc_{i}"),
-                    "source": md.get("source", "-"),
-                    "topic": md.get("topic", "-"),
-                    "sub_topic": md.get("sub_topic", "-"),
-                    "date_updated": md.get("date_updated", "-"),
-                    **{k: v for k, v in md.items() if k not in ("id", "source", "topic", "sub_topic", "date_updated")}
-                }
-                documents.append(Document(page_content=content, metadata=normalized_md))
+
+            # Cek sederhana (Heuristik) untuk menghindari dokumen saat update data
+            isUpdateRequest = any(keyword in query.lower() for keyword in ["ubah", "ganti", "perbarui", "update", "alamat", "berat badan", "tinggi badan", "tanggal lahir"])
+
+            if not isUpdateRequest:
+                retrievedDocs = self.retriever.retrieve(query)
+                
+                ids = set()
+                sourceDocuments = []
+
+                for d in retrievedDocs :
+                    md = d.metadata if hasattr(d, "metadata") else d.get("metadata", "")
+                    docId = md.get("id")
+                    if docId :
+                        if docId in ids :
+                            continue
+                        ids.add(docId)
+                        sourceDocuments.append(d)
+
+                for i, d in enumerate(sourceDocuments):
+                    content = d.page_content if hasattr(d, "page_content") else d.get("content", "")
+                    md = d.metadata if hasattr(d, "metadata") else d.get("metadata", {}) or {}
+                    normalized_md = {
+                        "id": md.get("id", f"doc_{i}"),
+                        "source": md.get("source", "-"),
+                        "topic": md.get("topic", "-"),
+                        "sub_topic": md.get("sub_topic", "-"),
+                        "date_updated": md.get("date_updated", "-"),
+                        **{k: v for k, v in md.items() if k not in ("id", "source", "topic", "sub_topic", "date_updated")}
+                    }
+                    documents.append(Document(page_content=content, metadata=normalized_md))
             
             return {
-                "answer": response["output"],
+                "answer": answer,
                 "source_documents": documents
             }
         

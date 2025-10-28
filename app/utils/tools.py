@@ -2,7 +2,7 @@ import httpx
 import os
 from dotenv import load_dotenv
 from typing import Optional
-from datetime import date
+from datetime import date, datetime
 from pydantic import EmailStr
 from langchain_core.tools import tool
 
@@ -30,12 +30,18 @@ def updateData(
     Perhatian : 
     1. Jika tanggal lahir diubah, umur akan dihitung ulang secara otomatis. 
     2. Jika tanggal kelahiran pertama diubah, periode kehamilan akan dihitung berdasarkan tanggal kelahiran pertama.
+    3. Jika user mengirimkan dalam format tanggal, bulan, tahun balik menjadi tahun, bulan tanggal
     Mohon pastikan bahwa perubahan data lain terkait diperbarui sesuai dengan perhitungan otomatis yang telah disediakan.
     """
     from app.utils.flow import getAgent
     agentInstance = getAgent()
 
     token = agentInstance.token
+
+    if tanggal_kehamilan_pertama:
+        tanggal_kehamilan_pertama = tanggal_kehamilan_pertama.isoformat()  
+    if tanggal_lahir:
+        tanggal_lahir = tanggal_lahir.isoformat() 
 
     updatePayload = {
         "nama" : nama,
