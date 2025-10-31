@@ -2,6 +2,9 @@ from fastapi import HTTPException, APIRouter
 from app.schemas.chatagent import QueryRequest, SourceDocument, QueryResponse
 from app.utils.flow import getAgent
 
+import asyncio
+import time
+
 router = APIRouter()
 
 # --- Endpoint API ---
@@ -14,17 +17,18 @@ def readRoot():
 
 @router.post("/chat", response_model=QueryResponse)
 async def chatEndpoint(request: QueryRequest):
-    """ Endpoint untuk berinteraksi dengan Chatbot Agent. """
-    agentInstance = getAgent()
-
-    if agentInstance is None:
-        raise HTTPException(
-            status_code=503, 
-            detail="Agent belum selesai diinisialisasi atau mengalami kegagalan."
-        )
-
     try:
-        response_data = agentInstance.generateResponse(
+        agentInstance = getAgent()
+        agent_start_time = time.time()
+
+        if agentInstance is None:
+            raise HTTPException(
+                status_code=503, 
+                detail="Agent belum selesai diinisialisasi atau mengalami kegagalan."
+            )
+    
+        response_data = await asyncio.to_thread(
+            agentInstance.generateResponse,
             query=request.query,
             nik=request.nik,      
             token=request.token   
@@ -38,6 +42,10 @@ async def chatEndpoint(request: QueryRequest):
             for doc in response_data["source_documents"]
         ]
         
+        agent_end_time = time.time()
+        agent_process_time = agent_end_time - agent_start_time
+        print(f"DEBUG: Total Agent Thread Execution Time: {agent_process_time:.2f}s") 
+
         return QueryResponse(
             answer=response_data["answer"],
             source_documents=converted_sources

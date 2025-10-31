@@ -7,31 +7,30 @@ from langchain_core.messages import SystemMessage
 from langchain.agents import AgentExecutor, create_tool_calling_agent
 from dotenv import load_dotenv
 from urllib.parse import urlparse
-from app.utils.tools import UPDATE_TOOLS
+from langchain.tools import tool 
+from typing import List, Optional
+from pydantic import EmailStr
+from datetime import date
 
 import os
 import functools
 import chromadb
+import httpx
 
 load_dotenv()
 if not os.getenv("GEMINI_API_KEY") and not os.getenv("GOOGLE_API_KEY"):
     raise ValueError("GEMINI_API_KEY atau GOOGLE_API_KEY tidak ditemukan di environment variables.")
 
 chromaDB = os.getenv("CHROMA_DB_URL")
+API_URL = os.getenv("API_URL", "http://127.0.0.1:8080/api/auth/update")
+
 parsed_url = urlparse(chromaDB)
 host = parsed_url.hostname
 port = parsed_url.port
-
 client = chromadb.HttpClient(host=host, port=port)
 
 EMBEDDING_MODEL = GoogleGenerativeAIEmbeddings(model="text-embedding-004")
 LLM_MODEL = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.1)
-
-FLOW_DIR = os.path.dirname(os.path.abspath(__file__)) 
-APP_DIR = os.path.dirname(FLOW_DIR)
-ROOT_DIR = os.path.dirname(APP_DIR)
-
-VECTOR_INDEX_FOLDER = os.path.join(ROOT_DIR, "data", "gizi_vector_index")
 INDEX_NAME = "gizi_index"
 
 class DataProcessor:
@@ -64,7 +63,7 @@ class VectorDatabase:
             embedding = self.embeddingFunction.embed_documents([content])[0]
             
             self.vectorStore.add(
-                [embedding],  # 
+                [embedding], 
                 metadatas=[{
                     "id": doc.get("id", "N/A"),
                     "topic": doc.get("topic", "N/A"),
@@ -72,44 +71,104 @@ class VectorDatabase:
                     "source": doc.get("source", "N/A"),
                     "date_updated": doc.get("date_updated", "N/A"),
                 }],
-                ids=[f"doc_{doc['id']}"]  
+                ids=[f"doc_{doc['id']}"] 
             )
             
         return self.vectorStore
-    
-class Retriever:
-    def __init__(self, vectorStore : Chroma):
-        self.retriever = vectorStore.as_retriever(search_kwargs={"k": 5})
-        self.vectorStore = vectorStore
-    
-    def retrieve(self, query: str) -> list[Document]:
-        """ Melakukan pencarian pada vector store untuk menemukan data relevan """
-        docs = self.retriever.get_relevant_documents(query)
-        return docs
     
 class ChatbotAgent:
     def __init__(self, vectorStore: Chroma, llm_model: ChatGoogleGenerativeAI):
         self.vectorStore = vectorStore
         self.llm = llm_model
-        self.retriever = Retriever(vectorStore)
         
         self.token = None 
-        self.nik = None   
+        self.nik = None
+        self.last_retrieved_docs: List[Document] = [] 
+        
+        # --- RAG CONSTANTS ---
+        self.DISTANCE_THRESHOLD = 0.35
+        self.DOC_COUNT = 3
 
-        rag_tool = self.retriever.retriever.as_tool(
-            name="Gizi_Retriever", 
-            description="Alat untuk mencari informasi spesifik mengenai gizi, kehamilan, dan stunting. Gunakan alat ini untuk menjawab semua pertanyaan yang berhubungan dengan kesehatan/gizi."
-        )
-        tools = [rag_tool] + UPDATE_TOOLS 
+        @tool
+        def Gizi_Retriever_Tool(query: str) -> str:
+            """
+            Alat untuk mencari informasi spesifik mengenai gizi, kehamilan, dan stunting. 
+            Gunakan alat ini untuk menjawab semua pertanyaan yang berhubungan dengan kesehatan/gizi.
+            Alat ini akan secara otomatis melakukan filtering berdasarkan relevansi skor (0.35).
+            """
+            scoredDocs = self.vectorStore.similarity_search_with_score(query, k=self.DOC_COUNT)
+            
+            retrieved_docs: List[Document] = [doc for doc, score in scoredDocs if score <= self.DISTANCE_THRESHOLD]
+            
+            self.last_retrieved_docs = retrieved_docs 
+
+            if not retrieved_docs:
+                trigger_message = "KONTEKS GIZI TIDAK DITEMUKAN. Silakan jawab pertanyaan ini menggunakan pengetahuan umum Anda HANYA JIKA topik masih berhubungan erat dengan Gizi, Kehamilan, atau Stunting, dan berikan disclaimer (informasi umum)."
+                return trigger_message
+            else:
+                context = "\n---\n".join([doc.page_content for doc in retrieved_docs])
+                return context
+
+        @tool
+        def updateData(
+            nama: Optional[str] | None = None,
+            tempat_lahir: Optional[str] | None = None ,
+            tanggal_lahir: Optional[date] | None = None ,
+            tanggal_kehamilan_pertama: Optional[date] | None = None ,
+            pal: Optional[str] | None = None ,
+            alamat: Optional[str] | None = None ,
+            email: Optional[EmailStr] | None = None ,  
+            berat_badan: Optional[float] | None = None ,
+            tinggi_badan: Optional[float] | None = None ,
+            lingkar_lengan_atas: Optional[float] | None = None 
+        ) :
+            """
+            Alat ini digunakan untuk memperbarui data profil kesehatan ibu hamil. 
+            Hanya panggil jika Bunda secara eksplisit meminta untuk mengubah 
+            data profil seperti berat badan atau tinggi badan. (Perhatian: Tanggal format YYYY-MM-DD)
+            """
+            token = self.token 
+
+            if tanggal_kehamilan_pertama:
+                tanggal_kehamilan_pertama = tanggal_kehamilan_pertama.isoformat()  
+            if tanggal_lahir:
+                tanggal_lahir = tanggal_lahir.isoformat() 
+
+            updatePayload = {
+                "nama" : nama, "tempat_lahir" : tempat_lahir, "tanggal_lahir" : tanggal_lahir,
+                "tanggal_kehamilan_pertama" : tanggal_kehamilan_pertama, "pal" : pal, 
+                "alamat" : alamat, "email" : email, "berat_badan" : berat_badan, 
+                "tinggi_badan" : tinggi_badan, "lingkar_lengan_atas" : lingkar_lengan_atas
+            }
+
+            updatePayload ={k: v for k, v in updatePayload.items() if v is not None}
+            print(updatePayload)
+
+            if not updatePayload :
+                return "Gagal Memperbaharui data: Tidak ada data yang valid untuk diperbarui."
+            
+            try :
+                headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+                response = httpx.put(f"{API_URL}", json=updatePayload, headers=headers)
+                response.raise_for_status()
+
+                return f"Data Anda telah berhasil diperbarui: {updatePayload}"
+            except httpx.HTTPStatusError as e:
+                return f"Gagal memanggil API Backend (Status {e.response.status_code}). Pastikan token valid."
+            except Exception as e:
+                return f"Terjadi error saat update data: {str(e)}"
+        
+        # --- GABUNG SEMUA TOOLS ---
+        tools = [Gizi_Retriever_Tool, updateData] 
         
         system_message = """
-            Anda adalah Asisten Pakar Gizi dan Pencegahan Stunting (MateBot), panggil setiap user 'Bunda'. 
+            Anda adalah Asisten Pakar Gizi dan Pencegahan Stunting (MateBot). Panggil setiap pengguna 'Bunda'. 
             
-            1. **Untuk Pertanyaan Gizi/Stunting:** Wajib gunakan alat 'Gizi_Retriever' untuk mendapatkan konteks. Jawablah berdasarkan konteks yang diberikan oleh alat tersebut.
-            2. **Untuk Permintaan Update Data:** Wajib gunakan alat 'updateData' HANYA JIKA Bunda secara eksplisit meminta untuk mengubah data profil (misalnya berat badan, usia, alamat, dll).
-            3. **Gaya Bahasa:** Jawab dengan bahasa Indonesia formal, ramah, dan informatif.
-            4. **Ketentuan Jawaban RAG:** Jika Anda menggunakan Gizi_Retriever, pastikan jawaban Anda menyebutkan Definisi, Penyebab, dan Pencegahan jika relevan, dan gunakan bullet point atau penomoran.
-            5. **Di Luar Topik:** Jika pertanyaan sama sekali tidak berhubungan dengan topik ini dan tidak memerlukan update data, jawab: 'Maaf Bunda, saya hanya dilatih untuk memberikan informasi spesifik mengenai gizi, pencegahan stunting, atau mengelola data profil Anda.'
+            1. **Gizi/Stunting:** Wajib gunakan alat 'Gizi_Retriever_Tool'. Jawab berdasarkan konteks RAG.
+                - Jika konteks kosong, berikan jawaban umum (Zero-Shot) HANYA untuk topik Gizi/Kehamilan/Stunting.
+            2. **Update Data:** Wajib gunakan alat 'updateData'.
+            3. **Gaya Bahasa:** Formal, ramah, dan informatif.
+            4. **Di Luar Topik:** Jawab singkat: 'Maaf Bunda, saya hanya dilatih untuk memberikan informasi spesifik mengenai gizi, pencegahan stunting, atau mengelola data profil Anda.'
         """
         
         agent_prompt = ChatPromptTemplate.from_messages([
@@ -118,58 +177,49 @@ class ChatbotAgent:
             ("placeholder", "{agent_scratchpad}"), 
         ])
 
-        llm_with_tools = self.llm.bind_tools(tools)
+        llm_with_tools = self.llm.bind_tools(tools).bind(stop=["Sekali lagi, Bunda, ini adalah informasi umum."])
         agent_chain = create_tool_calling_agent(llm_with_tools, tools, agent_prompt)
-        self.agent_executor = AgentExecutor(agent=agent_chain, tools=tools, verbose=True)
-
-    # flow.py (Di dalam class ChatbotAgent)
+        self.agent_executor = AgentExecutor(agent=agent_chain, 
+                                            tools=tools, 
+                                            verbose=True,
+                                            max_iterations=2)
 
     def generateResponse(self, query: str, nik: str, token: str): 
-        """ 
-        Menghasilkan respons menggunakan Agent Executor.
-        
-        Perbaikan: Hanya memproses source_documents jika Gizi_Retriever digunakan.
-        """
-        
         self.nik = nik
         self.token = token
+        self.last_retrieved_docs = [] 
 
-        
         try:
-            # 1. Panggil Agent Executor untuk mendapatkan jawaban dan menentukan tool yang digunakan
+            import time
+            invoke_start_time = time.time() 
+            
             response = self.agent_executor.invoke({"input": query})
             
+            invoke_end_time = time.time() 
+            invoke_process_time = invoke_end_time - invoke_start_time
+            print(f"DEBUG: LLM/RAG Invoke Time: {invoke_process_time:.2f}s")
             answer = response["output"]
+            
             documents = []
+            
+            update_keywords = ["ubah", "ganti", "perbarui", "update"]
+            is_update_request = any(keyword in query.lower() for keyword in update_keywords)
 
-            # Cek sederhana (Heuristik) untuk menghindari dokumen saat update data
-            isUpdateRequest = any(keyword in query.lower() for keyword in ["ubah", "ganti", "perbarui", "update", "alamat", "berat badan", "tinggi badan", "tanggal lahir"])
-
-            if not isUpdateRequest:
-                retrievedDocs = self.retriever.retrieve(query)
-                
+            if not is_update_request:
+                sourceDocuments = self.last_retrieved_docs 
                 ids = set()
-                sourceDocuments = []
-
-                for d in retrievedDocs :
-                    md = d.metadata if hasattr(d, "metadata") else d.get("metadata", "")
-                    docId = md.get("id")
-                    if docId :
-                        if docId in ids :
-                            continue
-                        ids.add(docId)
-                        sourceDocuments.append(d)
-
+    
                 for i, d in enumerate(sourceDocuments):
-                    content = d.page_content if hasattr(d, "page_content") else d.get("content", "")
-                    md = d.metadata if hasattr(d, "metadata") else d.get("metadata", {}) or {}
+                    docId = d.metadata.get("id")
+                    if docId and docId in ids:
+                        continue
+                        
+                    ids.add(docId)
+                    content = d.page_content
+                    
                     normalized_md = {
-                        "id": md.get("id", f"doc_{i}"),
-                        "source": md.get("source", "-"),
-                        "topic": md.get("topic", "-"),
-                        "sub_topic": md.get("sub_topic", "-"),
-                        "date_updated": md.get("date_updated", "-"),
-                        **{k: v for k, v in md.items() if k not in ("id", "source", "topic", "sub_topic", "date_updated")}
+                        "source": "Database Gizi RAG",
+                        "id": docId if docId else f"doc_{i}" 
                     }
                     documents.append(Document(page_content=content, metadata=normalized_md))
             
@@ -181,6 +231,7 @@ class ChatbotAgent:
         finally:
             self.nik = None
             self.token = None
+            self.last_retrieved_docs = []
     
 _GLOBAL_AGENT_INSTANCE = None 
     

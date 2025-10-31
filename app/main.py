@@ -1,4 +1,5 @@
 import logging
+import time
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -28,9 +29,16 @@ async def startup_event():
 
 @app.middleware("http")
 async def logRequests(request: Request, call_next):
+    start_time = time.time() # <-- Mulai waktu
     logger.info(f"Request: {request.method} {request.url}")
+    
     response = await call_next(request)
-    logger.info(f"Response status: {response.status_code}")
+    
+    end_time = time.time() # <-- Akhir waktu
+    process_time = end_time - start_time
+    
+    # Log durasi total Backend
+    logger.info(f"Response status: {response.status_code} | Total Backend Time: {process_time:.2f}s") 
     return response
 
 app.add_middleware(
